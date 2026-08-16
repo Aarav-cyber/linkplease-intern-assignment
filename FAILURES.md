@@ -37,3 +37,8 @@ load tests are performed.
 - The 500-event/10-second load test has not yet been completed. Rate-limit
   behavior, queue recovery, and final statistics still need to be verified
   under that workload.
+
+  - A worker can crash after PseudoGram accepts a DM but before the database
+  transaction commits the returned `dm_id`. The job may be attempted again
+  after restart. This is safe only because every send uses a deterministic
+  PseudoGram `Idempotency-Key` derived from the DM job ID.
