@@ -1,11 +1,13 @@
-from fastapi import FastAPI, Depends, status
+from fastapi import FastAPI, Depends, Request, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from .database import SessionLocal
+
 from .models import Rule
 from .schemas import RuleCreate, RuleResponse
-
+from .database import SessionLocal, settings
+from .security import verify_webhook_signature
+from .services.webhook_service import process_event
 
 app = FastAPI(title="LinkPlease Assignment")
 
@@ -72,3 +74,38 @@ def create_rule(
         keyword=rule.keyword,
         dm_message=rule.dm_message,
     )
+
+@app.post("/webhook")
+async def webhook(request: Request):
+    raw_body = await request.body()
+
+    signature = request.headers.get(
+        "X-PseudoGram-Signature",
+        "",
+    )
+
+    if not verify_webhook_signature(
+        raw_body,
+        signature,
+        settings.PSEUDOGRAM_API_KEY,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid webhook signature",
+        )
+
+    db = SessionLocal()
+
+    try:
+        is_new = process_event(
+            db,
+            raw_body,
+        )
+
+        return {
+            "status": "accepted",
+            "duplicate": not is_new,
+        }
+
+    finally:
+        db.close()
