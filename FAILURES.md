@@ -1,28 +1,39 @@
-## Verified Failure Modes
+# Known Failure Modes
 
-### PostgreSQL unavailable
-**Observed:** Webhook cannot persist the event.
+This document records failure modes that have been identified through
+implementation and testing. It will be updated as additional failure and
+load tests are performed.
 
-**Mitigation:** Return an error so the webhook provider can retry.
+## Currently known
 
-### Worker crash
-**Observed:** Worker terminates while jobs remain pending.
+- If the application is completely unavailable when the mock API sends a
+  webhook and the provider does not successfully redeliver it, the event
+  can be missed.
 
-**Mitigation:** Jobs remain persisted in PostgreSQL and are processed after
-the worker restarts.
+- If PostgreSQL is unavailable, the webhook cannot durably record the event.
+  The application should return a failure so the provider can retry rather
+  than pretending the event was processed.
 
-### PseudoGram 500
-**Observed:** DM request fails with HTTP 500.
+- If the worker process is terminated while an in-memory operation is in
+  progress, the current implementation depends on the persistent `dm_jobs`
+  state to recover. Worker claiming and recovery behavior still needs to be
+  tested under process termination.
 
-**Mitigation:** Job remains persistent and is retried using exponential
-backoff.
+- The mock DM API can return HTTP 500 responses. The worker must retry these
+  failures without losing the persistent DM job.
 
-### PseudoGram 429
-**Observed:** Rate limit response.
+- The mock DM API can return HTTP 429 responses. The worker must respect the
+  `Retry-After` header and avoid exceeding the provider's rate limit.
 
-**Mitigation:** Respect `Retry-After` and delay the next attempt.
+- A DM request returning HTTP 202 only means the mock API accepted the
+  request. The DM may later become `failed`, so delivery reconciliation is
+  required before reporting it as successfully delivered.
 
-### 202 accepted then failed
-**Observed:** PseudoGram accepts the DM but later reports failure.
+- A worker crash between the external DM API accepting a request and the
+  database recording its `dm_id` can potentially cause the request to be
+  attempted again. The PseudoGram `Idempotency-Key` must be used to make
+  retries safe.
 
-**Mitigation:** Reconciliation detects the failure and schedules a retry.
+- The 500-event/10-second load test has not yet been completed. Rate-limit
+  behavior, queue recovery, and final statistics still need to be verified
+  under that workload.
