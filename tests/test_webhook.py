@@ -8,11 +8,11 @@ import requests
 secret = b"test-secret"
 
 payload = {
-    "event_id": "evt_test_001",
+    "event_id": "evt_test_004",
     "event_type": "comment.created",
     "sent_at": "2026-08-17T00:00:00Z",
     "data": {
-        "comment_id": "cmt_test_001",
+        "comment_id": "cmt_test_004",
         "post_id": "post_001",
         "text": "PRICE please",
         "created_at": "2026-08-17T00:00:00Z",

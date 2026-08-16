@@ -1,17 +1,28 @@
-# Known Failure Modes
+## Verified Failure Modes
 
-This document will be updated throughout development and testing.
+### PostgreSQL unavailable
+**Observed:** Webhook cannot persist the event.
 
-## Current known limitations
+**Mitigation:** Return an error so the webhook provider can retry.
 
-- If PostgreSQL is unavailable when a webhook arrives, the event cannot be
-  durably recorded by the application.
+### Worker crash
+**Observed:** Worker terminates while jobs remain pending.
 
-- If the application is completely unavailable for longer than the webhook
-  provider's retry window, an event could potentially be missed.
+**Mitigation:** Jobs remain persisted in PostgreSQL and are processed after
+the worker restarts.
 
-- The DM delivery worker has not yet been implemented, so DM delivery,
-  retry handling, rate limiting, and reconciliation are not yet complete.
+### PseudoGram 500
+**Observed:** DM request fails with HTTP 500.
 
-- The final failure modes will be updated after the 500-event load test and
-  failure-injection tests are completed.
+**Mitigation:** Job remains persistent and is retried using exponential
+backoff.
+
+### PseudoGram 429
+**Observed:** Rate limit response.
+
+**Mitigation:** Respect `Retry-After` and delay the next attempt.
+
+### 202 accepted then failed
+**Observed:** PseudoGram accepts the DM but later reports failure.
+
+**Mitigation:** Reconciliation detects the failure and schedules a retry.
