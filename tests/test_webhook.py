@@ -36,7 +36,7 @@ response = requests.post(
     data=body,
     headers={
         "Content-Type": "application/json",
-        "X-PseudoGram-Signature": "sha256=wrong",
+        "X-PseudoGram-Signature": f"sha256={signature}",
     },
 )
 
