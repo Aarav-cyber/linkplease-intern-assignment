@@ -143,3 +143,79 @@ not automatically replayed from the webhook itself.
 
 Recovery is handled through the persisted DM job and retry/reconciliation
 logic instead.
+
+## 7. Environment-specific database configuration
+
+The application uses different database connection addresses depending on
+where it runs.
+
+When running Python directly on the host machine, PostgreSQL is exposed through:
+
+`localhost:5433`
+
+When running inside Docker, containers must connect through the Docker service
+name:
+
+`db:5432`
+
+Using `localhost:5433` inside the API or worker container causes database
+connection failures because `localhost` refers to the container itself.
+
+Alembic was also initially configured with the host-machine URL. The migration
+configuration was updated to use the `DATABASE_URL` environment variable so
+migrations work correctly inside Docker.
+
+## 8. Worker and API are separate processes
+
+The API and worker run as separate containers.
+
+If the API is running but the worker is stopped, webhook requests can still be
+accepted and DM jobs can be persisted, but pending jobs will not be sent until
+the worker becomes available.
+
+Similarly, if PostgreSQL is unavailable, both the API and worker can become
+unable to process persisted state.
+
+## 9. Statistics can temporarily contain zero values
+
+The `/stats` endpoint reports the current PostgreSQL state.
+
+A newly received webhook may have not yet created a completed DM job, or a DM
+may still be waiting for the worker or reconciliation process.
+
+Therefore a response such as:
+
+`sent=0, failed=0, queued=0`
+
+does not necessarily mean that no events have been received. It represents
+the DM job state at the moment the statistics query executes.
+
+## 10. Local test environment is different from production
+
+The automated test suite uses a local PostgreSQL database and mocked external
+PseudoGram responses.
+
+Passing all automated tests demonstrates the application's handling of
+idempotency, retries, rate limits, reconciliation, duplicate protection and
+statistics, but it does not prove that the production PseudoGram service,
+deployment infrastructure, DNS, TLS, or external network connectivity will
+always behave correctly.
+
+The final 500-event simulation must therefore be performed against the
+deployed public webhook endpoint.
+
+## 11. Manual webhook integration tests require a running API
+
+The repository contains a manual webhook test that sends a real HTTP request
+to the local API.
+
+This test is intended to be executed explicitly with:
+
+`python tests/test_webhook.py`
+
+It is not part of the automated pytest suite because requiring a running API
+during test collection would make the test suite dependent on external
+process state.
+
+The automated tests instead exercise the webhook processing logic directly
+where possible.
