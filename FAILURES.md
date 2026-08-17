@@ -42,3 +42,7 @@ load tests are performed.
   transaction commits the returned `dm_id`. The job may be attempted again
   after restart. This is safe only because every send uses a deterministic
   PseudoGram `Idempotency-Key` derived from the DM job ID.
+
+  - Network timeouts and other HTTP transport errors are retried with
+  exponential backoff. If the maximum retry count is reached, the job is
+  marked failed and the error is persisted in `last_error`.

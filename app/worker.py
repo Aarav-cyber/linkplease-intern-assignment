@@ -1,3 +1,5 @@
+import httpx
+
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -45,12 +47,47 @@ def calculate_backoff(attempts: int) -> int:
 
 
 def process_job(job: DMJob):
-    response = client.send_dm(
-        recipient_user_id=job.recipient_user_id,
-        message=job.message,
-        comment_id=job.comment_id,
-        job_id=str(job.id),
-    )
+    try:
+        response = client.send_dm(
+            recipient_user_id=job.recipient_user_id,
+            message=job.message,
+            comment_id=job.comment_id,
+            job_id=str(job.id),
+        )
+
+    except httpx.TimeoutException as exc:
+        job.attempts += 1
+
+        if job.attempts >= MAX_RETRIES:
+            job.status = "failed"
+        else:
+            delay = calculate_backoff(job.attempts)
+
+            job.next_attempt_at = (
+                datetime.now(timezone.utc)
+                + timedelta(seconds=delay)
+            )
+
+        job.last_error = f"timeout: {exc}"
+
+        return
+
+    except httpx.HTTPError as exc:
+        job.attempts += 1
+
+        if job.attempts >= MAX_RETRIES:
+            job.status = "failed"
+        else:
+            delay = calculate_backoff(job.attempts)
+
+            job.next_attempt_at = (
+                datetime.now(timezone.utc)
+                + timedelta(seconds=delay)
+            )
+
+        job.last_error = f"network error: {exc}"
+
+        return
 
     if response.status_code == 202:
         data = response.json()
@@ -109,12 +146,20 @@ def process_job(job: DMJob):
         return
 
     job.attempts += 1
-    job.next_attempt_at = (
-        datetime.now(timezone.utc)
-        + timedelta(seconds=calculate_backoff(job.attempts))
-    )
-    job.last_error = f"Unexpected HTTP status: {response.status_code}"
 
+    if job.attempts >= MAX_RETRIES:
+        job.status = "failed"
+    else:
+        job.next_attempt_at = (
+            datetime.now(timezone.utc)
+            + timedelta(
+                seconds=calculate_backoff(job.attempts)
+            )
+        )
+
+    job.last_error = (
+        f"Unexpected HTTP status: {response.status_code}"
+    )
 
 def run_worker():
     while True:
@@ -138,3 +183,6 @@ def run_worker():
 
         finally:
             db.close()
+
+if __name__ == "__main__":
+    run_worker()
