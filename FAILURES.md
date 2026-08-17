@@ -219,3 +219,26 @@ process state.
 
 The automated tests instead exercise the webhook processing logic directly
 where possible.
+
+
+---
+
+# Step 23B — Update `FAILURES.md`
+
+We also need to record one thing we just discovered: **environment-specific configuration can break the whole API if migrations cannot connect to the database.**
+
+Add:
+
+```md
+## 12. Migration startup dependency
+
+The API container runs database migrations before starting Uvicorn.
+
+If the configured production `DATABASE_URL` is invalid, unreachable, or points
+to the wrong host/port, the migration command fails and the API does not start.
+
+The Docker configuration therefore uses the Docker PostgreSQL service name
+(`db:5432`) for container-to-container communication.
+
+A production database outage during container startup can consequently prevent
+the API container from becoming healthy until the database becomes available. 
