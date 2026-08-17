@@ -1,10 +1,32 @@
 import json
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..models import Comment, DMJob, Event, Rule
+from ..models import (
+    Comment,
+    DMJob,
+    DuplicateBlock,
+    Event,
+    Rule,
+)
+
+
+def record_duplicate_block(
+    db: Session,
+    rule_id,
+    comment_id,
+    recipient_user_id,
+):
+    duplicate = DuplicateBlock(
+        rule_id=rule_id,
+        comment_id=comment_id,
+        recipient_user_id=recipient_user_id,
+    )
+
+    db.add(duplicate)
+    db.flush()
 
 
 def process_event(
@@ -61,21 +83,29 @@ def process_event(
                 if rule.keyword.lower() not in comment_text:
                     continue
 
-                dm_statement = (
-                    insert(DMJob)
-                    .values(
+                try:
+                    with db.begin_nested():
+                        job = DMJob(
+                            rule_id=rule.id,
+                            comment_id=comment.comment_id,
+                            recipient_user_id=comment.user_id,
+                            message=rule.dm_message,
+                            status="pending",
+                        )
+
+                        db.add(job)
+                        db.flush()
+
+                except IntegrityError as exc:
+                    if "uq_dm_jobs_rule_recipient" not in str(exc):
+                        raise
+
+                    record_duplicate_block(
+                        db,
                         rule_id=rule.id,
                         comment_id=comment.comment_id,
                         recipient_user_id=comment.user_id,
-                        message=rule.dm_message,
-                        status="pending",
                     )
-                    .on_conflict_do_nothing(
-                        constraint="uq_rule_recipient"
-                    )
-                )
-
-                db.execute(dm_statement)
 
         db.commit()
 

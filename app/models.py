@@ -188,10 +188,9 @@ class DMJob(Base):
         UniqueConstraint(
             "rule_id",
             "recipient_user_id",
-            name="uq_rule_recipient",
+            name="uq_dm_jobs_rule_recipient",
         ),
     )
-
 
 class DuplicateBlock(Base):
     __tablename__ = "duplicate_blocks"
