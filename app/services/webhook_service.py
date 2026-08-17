@@ -1,6 +1,7 @@
 import json
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -62,33 +63,52 @@ def process_event(
         if event_type == "comment.created":
             comment_data = data["data"]
 
-            comment = Comment(
-                comment_id=comment_data["comment_id"],
-                post_id=comment_data.get("post_id"),
-                user_id=comment_data["from"]["user_id"],
-                username=comment_data["from"]["username"],
-                text=comment_data.get("text") or "",
+            comment_id = comment_data["comment_id"]
+            user_id = comment_data["from"]["user_id"]
+            username = comment_data["from"]["username"]
+            comment_text = comment_data.get("text") or ""
+
+            # Insert the comment exactly once.
+            comment_statement = (
+                insert(Comment)
+                .values(
+                    comment_id=comment_id,
+                    post_id=comment_data.get("post_id"),
+                    user_id=user_id,
+                    username=username,
+                    text=comment_text,
+                )
+                .on_conflict_do_nothing(
+                    index_elements=[Comment.comment_id]
+                )
             )
 
-            db.add(comment)
-            db.flush()
+            comment_result = db.execute(comment_statement)
+
+            # Comment was already processed.
+            # Do not create another DM job.
+            if comment_result.rowcount == 0:
+                db.commit()
+                return True
 
             rules = db.scalars(
                 select(Rule)
             ).all()
 
-            comment_text = comment.text.lower()
+            comment_text_lower = comment_text.lower()
 
             for rule in rules:
-                if rule.keyword.lower() not in comment_text:
+                if rule.keyword.lower() not in comment_text_lower:
                     continue
 
                 try:
+                    # Use a SAVEPOINT so a duplicate DMJob
+                    # does not roll back the whole event.
                     with db.begin_nested():
                         job = DMJob(
                             rule_id=rule.id,
-                            comment_id=comment.comment_id,
-                            recipient_user_id=comment.user_id,
+                            comment_id=comment_id,
+                            recipient_user_id=user_id,
                             message=rule.dm_message,
                             status="pending",
                         )
@@ -103,8 +123,8 @@ def process_event(
                     record_duplicate_block(
                         db,
                         rule_id=rule.id,
-                        comment_id=comment.comment_id,
-                        recipient_user_id=comment.user_id,
+                        comment_id=comment_id,
+                        recipient_user_id=user_id,
                     )
 
         db.commit()
@@ -114,3 +134,4 @@ def process_event(
     except Exception:
         db.rollback()
         raise
+
