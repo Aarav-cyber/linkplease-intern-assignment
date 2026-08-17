@@ -6,6 +6,8 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.services.rate_limiter import acquire_send_slot
+
 from .database import SessionLocal
 from .models import DMJob
 from .services.pseudogram_client import PseudoGramClient
@@ -46,7 +48,14 @@ def calculate_backoff(attempts: int) -> int:
     )
 
 
-def process_job(job: DMJob):
+def process_job(
+    db: Session,
+    job: DMJob,
+):
+
+    if not acquire_send_slot(db):
+        return
+    
     try:
         response = client.send_dm(
             recipient_user_id=job.recipient_user_id,
@@ -173,7 +182,7 @@ def run_worker():
                 time.sleep(POLL_INTERVAL)
                 continue
 
-            process_job(job)
+            process_job(db, job)
 
             db.commit()
 

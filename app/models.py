@@ -222,3 +222,19 @@ class DuplicateBlock(Base):
         server_default=func.now(),
         nullable=False,
     )
+
+class DMSendAttempt(Base):
+    __tablename__ = "dm_send_attempts"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid4()),
+    )
+
+    attempted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )

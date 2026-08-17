@@ -6,6 +6,10 @@ from unittest.mock import patch
 from app.worker import process_job
 
 
+class FakeDB:
+    pass
+
+
 def make_job():
     return SimpleNamespace(
         id="job-123",
@@ -32,6 +36,7 @@ def make_response(
         json=lambda: json_data or {},
     )
 
+
 def test_successful_dm():
     job = make_job()
 
@@ -43,12 +48,16 @@ def test_successful_dm():
     with patch(
         "app.worker.client.send_dm",
         return_value=response,
+    ), patch(
+        "app.worker.acquire_send_slot",
+        return_value=True,
     ):
-        process_job(job)
+        process_job(FakeDB(), job)
 
     assert job.status == "queued"
     assert job.dm_id == "dm_123"
     assert job.last_error is None
+
 
 def test_bad_request_fails_without_retry():
     job = make_job()
@@ -64,11 +73,15 @@ def test_bad_request_fails_without_retry():
     with patch(
         "app.worker.client.send_dm",
         return_value=response,
+    ), patch(
+        "app.worker.acquire_send_slot",
+        return_value=True,
     ):
-        process_job(job)
+        process_job(FakeDB(), job)
 
     assert job.status == "failed"
     assert job.attempts == 0
+
 
 def test_server_error_retries():
     job = make_job()
@@ -81,12 +94,16 @@ def test_server_error_retries():
     with patch(
         "app.worker.client.send_dm",
         return_value=response,
+    ), patch(
+        "app.worker.acquire_send_slot",
+        return_value=True,
     ):
-        process_job(job)
+        process_job(FakeDB(), job)
 
     assert job.status == "pending"
     assert job.attempts == 1
     assert job.next_attempt_at is not None
+
 
 def test_rate_limit_respects_retry_after():
     job = make_job()
@@ -100,12 +117,16 @@ def test_rate_limit_respects_retry_after():
     with patch(
         "app.worker.client.send_dm",
         return_value=response,
+    ), patch(
+        "app.worker.acquire_send_slot",
+        return_value=True,
     ):
-        process_job(job)
+        process_job(FakeDB(), job)
 
     assert job.status == "pending"
     assert job.attempts == 1
     assert job.next_attempt_at is not None
+
 
 def test_retry_exhaustion():
     job = make_job()
@@ -119,11 +140,15 @@ def test_retry_exhaustion():
     with patch(
         "app.worker.client.send_dm",
         return_value=response,
+    ), patch(
+        "app.worker.acquire_send_slot",
+        return_value=True,
     ):
-        process_job(job)
+        process_job(FakeDB(), job)
 
     assert job.attempts == 3
     assert job.status == "failed"
+
 
 def test_timeout_is_recoverable():
     job = make_job()
@@ -131,13 +156,17 @@ def test_timeout_is_recoverable():
     with patch(
         "app.worker.client.send_dm",
         side_effect=httpx.TimeoutException("timeout"),
+    ), patch(
+        "app.worker.acquire_send_slot",
+        return_value=True,
     ):
-        process_job(job)
+        process_job(FakeDB(), job)
 
     assert job.status == "pending"
     assert job.attempts == 1
     assert job.next_attempt_at is not None
     assert "timeout" in job.last_error
+
 
 def test_timeout_retry_exhaustion():
     job = make_job()
@@ -146,9 +175,27 @@ def test_timeout_retry_exhaustion():
     with patch(
         "app.worker.client.send_dm",
         side_effect=httpx.TimeoutException("timeout"),
+    ), patch(
+        "app.worker.acquire_send_slot",
+        return_value=True,
     ):
-        process_job(job)
+        process_job(FakeDB(), job)
 
     assert job.status == "failed"
     assert job.attempts == 3
     assert "timeout" in job.last_error
+
+
+def test_worker_does_not_send_when_rate_limited():
+    job = make_job()
+
+    with patch(
+        "app.worker.acquire_send_slot",
+        return_value=False,
+    ), patch(
+        "app.worker.client.send_dm"
+    ) as mock_send:
+        process_job(FakeDB(), job)
+
+    mock_send.assert_not_called()
+    assert job.status == "pending"
