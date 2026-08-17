@@ -21,6 +21,8 @@ services:
     container_name: linkplease-api
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/linkplease
     ports:
       - "8000:8000"
     depends_on:
@@ -28,12 +30,15 @@ services:
         condition: service_healthy
     volumes:
       - ./app:/app/app
+
   worker:
     build: .
     container_name: linkplease-worker
     command: python -m app.worker
     env_file:
       - .env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/linkplease
     depends_on:
       db:
         condition: service_healthy
