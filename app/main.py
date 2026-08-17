@@ -1,6 +1,9 @@
 from fastapi import FastAPI, Depends, Request, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from sqlalchemy import func, select
+
+from .models import DMJob, DuplicateBlock
 
 
 from .models import Rule
@@ -105,6 +108,47 @@ async def webhook(request: Request):
         return {
             "status": "accepted",
             "duplicate": not is_new,
+        }
+
+    finally:
+        db.close()
+        
+
+@app.get("/stats")
+def get_stats():
+    db = SessionLocal()
+
+    try:
+        sent = db.scalar(
+            select(func.count())
+            .select_from(DMJob)
+            .where(DMJob.status == "sent")
+        ) or 0
+
+        failed = db.scalar(
+            select(func.count())
+            .select_from(DMJob)
+            .where(DMJob.status == "failed")
+        ) or 0
+
+        queued = db.scalar(
+            select(func.count())
+            .select_from(DMJob)
+            .where(
+                DMJob.status.in_(["pending", "queued"])
+            )
+        ) or 0
+
+        duplicates_blocked = db.scalar(
+            select(func.count())
+            .select_from(DuplicateBlock)
+        ) or 0
+
+        return {
+            "sent": sent,
+            "failed": failed,
+            "queued": queued,
+            "duplicates_blocked": duplicates_blocked,
         }
 
     finally:

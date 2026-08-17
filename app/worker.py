@@ -25,7 +25,7 @@ client = PseudoGramClient()
 def get_pending_job(db: Session):
     now = datetime.now(timezone.utc)
 
-    statement = (
+    statement = (   
         select(DMJob)
         .where(
             DMJob.status == "pending",
@@ -38,6 +38,19 @@ def get_pending_job(db: Session):
 
     return db.scalars(statement).first()
 
+def get_queued_job(db: Session):
+    statement = (
+        select(DMJob)
+        .where(
+            DMJob.status == "queued",
+            DMJob.dm_id.is_not(None),
+        )
+        .order_by(DMJob.updated_at)
+        .with_for_update(skip_locked=True)
+        .limit(1)
+    )
+
+    return db.scalars(statement).first()
 
 def calculate_backoff(attempts: int) -> int:
     delay = BACKOFF_BASE * (2 ** (attempts - 1))
@@ -170,19 +183,93 @@ def process_job(
         f"Unexpected HTTP status: {response.status_code}"
     )
 
+def reconcile_job(
+    db: Session,
+    job: DMJob,
+):
+    if not job.dm_id:
+        return
+
+    try:
+        response = client.get_dm_status(job.dm_id)
+
+    except httpx.HTTPError as exc:
+        job.last_error = f"reconciliation network error: {exc}"
+        return
+
+    if response.status_code != 200:
+        job.last_error = (
+            f"reconciliation HTTP status: "
+            f"{response.status_code}"
+        )
+        return
+
+    try:
+        data = response.json()
+    except Exception as exc:
+        job.last_error = (
+            f"invalid reconciliation response: {exc}"
+        )
+        return
+
+    status = data.get("status")
+
+    if status == "delivered":
+        job.status = "sent"
+        job.last_error = None
+        return
+
+    if status == "queued":
+        # Still waiting for delivery.
+        return
+
+    if status == "failed":
+        job.attempts += 1
+
+        if job.attempts >= MAX_RETRIES:
+            job.status = "failed"
+            job.last_error = "DM delivery failed after retries"
+            return
+
+        job.status = "pending"
+
+        delay = calculate_backoff(job.attempts)
+
+        job.next_attempt_at = (
+            datetime.now(timezone.utc)
+            + timedelta(seconds=delay)
+        )
+
+        job.last_error = "DM delivery failed; retry scheduled"
+        return
+
+    job.last_error = (
+        f"Unknown DM delivery status: {status}"
+    )
+
 def run_worker():
     while True:
         db = SessionLocal()
 
         try:
-            job = get_pending_job(db)
+            # First check whether a queued DM has a delivery update.
+            queued_job = get_queued_job(db)
 
-            if not job:
+            if queued_job:
+                reconcile_job(db, queued_job)
+                db.commit()
+                continue
+
+            # If there is nothing to reconcile,
+            # look for a new/retryable DM.
+            pending_job = get_pending_job(db)
+
+            if not pending_job:
                 db.close()
                 time.sleep(POLL_INTERVAL)
                 continue
 
-            process_job(db, job)
+            process_job(db, pending_job)
 
             db.commit()
 

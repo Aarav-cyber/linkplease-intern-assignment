@@ -10,11 +10,11 @@ class PseudoGramClient:
         self.api_key = settings.PSEUDOGRAM_API_KEY
 
     def send_dm(
-    self,
-    recipient_user_id: str,
-    message: str,
-    comment_id: str,
-    job_id: str,
+        self,
+        recipient_user_id: str,
+        message: str,
+        comment_id: str,
+        job_id: str,
     ):
         response = httpx.post(
             f"{self.base_url}/v1/dm/send",
@@ -26,6 +26,17 @@ class PseudoGramClient:
                 "recipient_user_id": recipient_user_id,
                 "message": message,
                 "comment_id": comment_id,
+            },
+            timeout=10.0,
+        )
+
+        return response
+
+    def get_dm_status(self, dm_id: str):
+        response = httpx.get(
+            f"{self.base_url}/v1/dm/{dm_id}",
+            headers={
+                "X-API-Key": self.api_key,
             },
             timeout=10.0,
         )
